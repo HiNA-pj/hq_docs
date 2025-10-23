@@ -1,0 +1,35 @@
+name: MAC Notify Departments
+on:
+  workflow_run:
+    workflows: ["MAC Morning Summary"]
+    types: [completed]
+  workflow_dispatch:
+permissions:
+  pull-requests: write
+  contents: read
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install requests
+      - name: Comment to mac/* PRs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          python - << 'PY'
+          import os, requests, datetime
+          token=os.environ["GITHUB_TOKEN"]; owner,repo=os.environ["REPO"].split("/")
+          h={"Authorization":f"token {token}","Accept":"application/vnd.github+json"}
+          prs=requests.get(f"https://api.github.com/repos/{owner}/{repo}/pulls?state=open&per_page=100",headers=h).json()
+          mac=[p for p in prs if str(p.get("head",{}).get("ref","")).startswith("mac/")]
+          jst=(datetime.datetime.utcnow()+datetime.timedelta(hours=9)).strftime("%Y-%m-%d")
+          for p in mac:
+            number=p["number"]; ref=p["head"]["ref"]
+            body=f"📣 HQ通知（{jst}）\n- 昨夜のMACで検出: `{ref}`\n- **今日のタスク** を日報へ追記し、完了時はここにコメントしてください。"
+            requests.post(f"https://api.github.com/repos/{owner}/{repo}/issues/{number}/comments",
+                          headers=h, json={"body":body})
+          print("Notified", len(mac), "PRs")
+          PY
