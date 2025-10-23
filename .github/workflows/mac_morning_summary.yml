@@ -1,0 +1,50 @@
+name: MAC Morning Summary
+on:
+  schedule:
+    - cron: "5 21 * * *"   # JST 06:05
+  workflow_dispatch:
+permissions:
+  contents: write
+  pull-requests: read
+jobs:
+  summarize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install requests
+      - name: Build summary
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          python - << 'PY'
+          import os, requests, datetime, pathlib
+          token = os.environ["GITHUB_TOKEN"]
+          owner, repo = os.environ["REPO"].split("/")
+          h={"Authorization":f"token {token}","Accept":"application/vnd.github+json"}
+          prs = requests.get(f"https://api.github.com/repos/{owner}/{repo}/pulls?state=open&per_page=100", headers=h).json()
+          mac=[p for p in prs if str(p.get("head",{}).get("ref","")).startswith("mac/")]
+          jst=(datetime.datetime.utcnow()+datetime.timedelta(hours=9))
+          ymd=jst.strftime("%Y%m%d"); ymd_dash=jst.strftime("%Y-%m-%d")
+          lines=[f"# HQ日報まとめ（{ymd_dash}）\n"]
+          if not mac: lines+=["- 本日時点の mac/* PR はありません（差分なし）\n"]
+          else:
+            lines+=["## 各部門進捗"]
+            for p in mac:
+              ref=p["head"]["ref"]; url=p["html_url"]; title=p["title"]; num=p["number"]
+              lines.append(f"- 🟢 PR #{num}: {title}  [{ref}]  {url}")
+            lines.append("")
+          out=pathlib.Path("mon_standard/reports/hq")/f"daily_summary_{ymd}.md"
+          out.parent.mkdir(parents=True, exist_ok=True)
+          out.write_text("\n".join(lines), encoding="utf-8")
+          print("Wrote", out)
+          PY
+      - name: Commit summary
+        run: |
+          git config user.name "mac-bot"
+          git config user.email "mac-bot@users.noreply.github.com"
+          git add mon_standard/reports/hq/daily_summary_*.md
+          git commit -m "chore(hq): daily summary [skip ci]" || echo "nothing to commit"
+          git push
